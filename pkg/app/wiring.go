@@ -703,6 +703,11 @@ func (a *App) wireServicesInner(ctx context.Context) error {
 		return fmt.Errorf("init auth store: %w", err)
 	}
 	a.authStore = authStore
+	if a.cfg.EnsureStationUser {
+		if err := ensureStationUser(ctx, authStore, a.cfg.Version, a.logger); err != nil {
+			return err
+		}
+	}
 
 	// --- HTTP server ---------------------------------------------------
 	if err := a.wireHTTP(ctx); err != nil {
@@ -3187,12 +3192,14 @@ func (a *App) httpComponent() namedComponent {
 	return namedComponent{
 		name: "http",
 		start: func(ctx context.Context) error {
-			a.logBanner()
 			ln, lerr := net.Listen("tcp", a.httpSrv.Addr)
 			if lerr != nil {
 				a.logger.Error("http: listen failed", "addr", a.httpSrv.Addr, "err", lerr)
 				return lerr
 			}
+			// Banner uses the bound address so an OS-chosen port
+			// (HTTPAddr ":0", desktop app) logs the real URL.
+			a.logBanner(ln.Addr().String())
 			if a.cfg.OnHTTPListenerReady != nil {
 				a.cfg.OnHTTPListenerReady()
 			}
@@ -3220,9 +3227,10 @@ func (a *App) httpComponent() namedComponent {
 // logBanner writes one or more "web UI available" log lines at startup.
 // For a wildcard bind (0.0.0.0/::) it enumerates every usable interface
 // address so operators see real, clickable URLs rather than "0.0.0.0".
-func (a *App) logBanner() {
+// addr is the listener's bound address.
+func (a *App) logBanner(addr string) {
 	scheme := "http"
-	host, port, _ := net.SplitHostPort(a.cfg.HTTPAddr)
+	host, port, _ := net.SplitHostPort(addr)
 	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
 		if ifaces, err := net.Interfaces(); err == nil {
 			for _, iface := range ifaces {
@@ -3250,7 +3258,7 @@ func (a *App) logBanner() {
 		a.logger.Info("web UI available", "url", fmt.Sprintf("%s://127.0.0.1:%s", scheme, port), "iface", "lo")
 		return
 	}
-	a.logger.Info("web UI available", "url", fmt.Sprintf("%s://%s", scheme, a.cfg.HTTPAddr))
+	a.logger.Info("web UI available", "url", fmt.Sprintf("%s://%s", scheme, addr))
 }
 
 // waitGroup blocks until wg signals Done or shutdownCtx fires. On

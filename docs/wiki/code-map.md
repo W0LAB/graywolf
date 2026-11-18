@@ -256,11 +256,13 @@ Mirrors the tactical-callsign machinery end-to-end.
 | `app/txbackend` | Per-channel TX backend dispatcher; KISS-as-backend, modem-as-backend |
 | `app/{aprsfanout,rxfanout}` | RX fanout to digipeater / KISS broadcast / APRS submit |
 | `app/{auth_store,gpsmanager,adapters,wiring,modem,flags,config,shutdown,platform_*}` | Wiring helpers |
+| `app/logsetup.go` | `SetupLogger`: logbuffer ring (Pi/SD -> ramdisk) shared by `cmd/graywolf` and `cmd/graywolf-desktop` |
+| `app/station_user.go` | `ensureStationUser` for launch-token hosts (`Config.EnsureStationUser`) |
 | `internal/{backoff,dedup,ratelimit,testsync,testtx}` | Internal utilities |
 
-## Native desktop shell (`cmd/graywolf-desktop/`) -- spike
+## Native desktop shell (`cmd/graywolf-desktop/`)
 
-Phase 0 spike, not shipped or wired into CI yet. Plan:
+In development (Phases 0-1 done), not shipped or wired into CI yet. Plan (local, `.context/` is gitignored):
 [`../../.context/2026-11-17-native-desktop-shell.md`](../../.context/2026-11-17-native-desktop-shell.md).
 
 | Concern | Where |
@@ -270,7 +272,11 @@ Phase 0 spike, not shipped or wired into CI yet. Plan:
 | Per-launch bearer token -> SPA | initial URL `?gwdesktop=<token>`; captured and stripped by [`../../web/src/lib/desktopBridge.js`](../../web/src/lib/desktopBridge.js); attached by `secureFetch.js` |
 | Platform kind `desktop-app` (`Platform.isDesktopApp`, `Platform.hasLaunchToken`) | [`../../web/src/lib/platform.js`](../../web/src/lib/platform.js); login page skipped in `App.svelte` |
 | Data dir | Linux `$XDG_DATA_HOME/graywolf` (`paths_unix.go`); Windows `%ProgramData%\Graywolf` (`paths_windows.go`); explicit `-config` moves log + webview profile beside it |
-| Single-instance lock (Linux needs session D-Bus; skipped with a warning if absent) | `singleinstance_{linux,other}.go` |
+| Single-instance lock; a second launch focuses the running window (Linux needs session D-Bus; skipped with a warning if absent) | `singleinstance_{linux,other}.go` |
+| Station user on a fresh install (no login page, so none is ever created otherwise) | `app.Config.EnsureStationUser` -> `ensureStationUser` in [`../../pkg/app/station_user.go`](../../pkg/app/station_user.go): user `station`, random unknown password, created via `CreateFirstUser` |
+| Logging | `graywolf-desktop.log` in the data dir (rotated to `.1` past 10 MB at startup) + the shared logbuffer ring via `app.SetupLogger` ([`../../pkg/app/logsetup.go`](../../pkg/app/logsetup.go), also used by `cmd/graywolf`), attached only after the single-instance check |
+| Web inspector | only with `-debug` (`DevToolsEnabled: cfg.Debug`) |
+| Shutdown | tray Quit, window-manager quit, or SIGTERM (Wails turns it into a quit) -> cancel ctx -> `App.Stop`; modem exits with its parent even on a hard kill |
 | Build | own Go module (`cmd/graywolf-desktop/go.mod`, `replace` to repo root); see [build-pipelines](build-pipelines.md) and [invariant 71](invariants.md) |
 
 ## Go service: diagnostic flare CLI

@@ -116,6 +116,13 @@ type Config struct {
 	// OS-chosen port. Used by cmd/graywolf-desktop.
 	OnHTTPListenerBound func(net.Addr)
 
+	// EnsureStationUser, when true, creates the single station user at
+	// startup if none exists (random, unknown password). For hosts that
+	// authenticate the UI with BearerToken and have no setup page, so
+	// user-scoped endpoints work on a fresh install. Set by
+	// cmd/graywolf-desktop; headless and Android leave it false.
+	EnsureStationUser bool
+
 	// LogBuffer is the standalone slog ring-buffer DB, set by main after
 	// setupLogger. nil when the buffer is disabled/unavailable; the
 	// /api/system-logs endpoint then reports available:false.

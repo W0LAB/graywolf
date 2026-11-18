@@ -14,7 +14,7 @@ import (
 // as a session-bus name and treats a missing bus as fatal (os.Exit(1)
 // inside application.New), which would make the app silently fail to
 // launch on minimal setups (WSL, bare window managers, some kiosks).
-func singleInstanceOptions(logger *slog.Logger) *application.SingleInstanceOptions {
+func singleInstanceOptions(logger *slog.Logger, onSecondLaunch func()) *application.SingleInstanceOptions {
 	conn, err := dbus.SessionBusPrivate()
 	if err == nil {
 		err = conn.Auth(nil)
@@ -27,5 +27,8 @@ func singleInstanceOptions(logger *slog.Logger) *application.SingleInstanceOptio
 		logger.Warn("desktop: no session D-Bus; single-instance lock and tray icon unavailable", "err", err)
 		return nil
 	}
-	return &application.SingleInstanceOptions{UniqueID: singleInstanceID}
+	return &application.SingleInstanceOptions{
+		UniqueID:               singleInstanceID,
+		OnSecondInstanceLaunch: func(application.SecondInstanceData) { onSecondLaunch() },
+	}
 }

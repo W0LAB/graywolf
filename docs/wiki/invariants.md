@@ -2128,7 +2128,10 @@ The native desktop shell (`cmd/graywolf-desktop`) therefore hands its
 per-launch bearer to the SPA through the initial URL (`?gwdesktop=`),
 captured by `desktopBridge.js`, and the platform kind is `desktop-app`.
 Gate Android-only surfaces on `=== 'android'`, never on `!== 'desktop'`;
-gate "no cookie login, a host shell owns auth" on `Platform.hasLaunchToken`.
+gate "no cookie login, a host shell owns auth" on `Platform.hasLaunchToken`
+(`App.svelte`), or on either bridge's token (`api.js` 401 handler) -- never
+redirect to `#/login` when a launch token is present; that route does not
+exist in either shell.
 
 `cmd/graywolf-desktop` has its own `go.mod` (with `replace` to the repo
 root). Adding Wails v3 to the root module raises shared dependencies

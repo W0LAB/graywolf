@@ -2,6 +2,7 @@
 // Returns mock data when the API is unreachable (dev without backend).
 
 import { getBearerToken } from './androidBridge.js';
+import { getDesktopToken } from './desktopBridge.js';
 import { markConnected, markDisconnected } from './stores/connection.js';
 
 const MOCK_DELAY = 200;
@@ -51,8 +52,8 @@ async function request(method, path, body = null) {
   // Any response — even a 4xx/5xx — proves the server is reachable.
   markConnected();
   if (res.status === 401) {
-    if (getBearerToken() !== null) {
-      // Android: no login route. The bearer token is per-launch and
+    if (getBearerToken() !== null || getDesktopToken() !== null) {
+      // Android / desktop app: no login route. The bearer token is per-launch and
       // injected by the Service; a 401 here means the Service rotated
       // the token (supervisor restart) or the wrapper failed to inject.
       // Throw without navigating; callers surface the error and the

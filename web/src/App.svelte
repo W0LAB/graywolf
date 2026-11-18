@@ -119,12 +119,13 @@
     // mismatch that a reload can't fix. /login is also stripped from
     // the route map on Android, so the redirect would render a blank
     // page anyway.
-    // Desktop shell (cmd/graywolf-desktop) behaves the same way.
-    const isAndroid = Platform.hasLaunchToken;
+    // The desktop app (cmd/graywolf-desktop) behaves the same way: a
+    // host shell owns auth, so there is no login page to send anyone to.
+    const hostOwnsAuth = Platform.hasLaunchToken;
     fetch('/api/auth/setup')
       .then(r => r.json())
       .then(data => {
-        if (data.needs_setup && !isAndroid) {
+        if (data.needs_setup && !hostOwnsAuth) {
           window.location.hash = '#/login';
           authChecked = true;
           return;
@@ -133,7 +134,7 @@
         // Fetch version (public endpoint) in parallel with auth probe.
         fetch('/api/version').then(r => r.json()).then(d => { version = d.version; }).catch(() => {});
         return fetch('/api/status', { credentials: 'same-origin' }).then(r => {
-          if (r.status === 401 && !isAndroid) window.location.hash = '#/login';
+          if (r.status === 401 && !hostOwnsAuth) window.location.hash = '#/login';
           authChecked = true;
         });
       })

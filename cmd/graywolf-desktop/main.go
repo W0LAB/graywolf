@@ -71,9 +71,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger, closeLog := setupLogger(cfg, dataDir)
+	// Shell logger: stderr + rotating file. The station's logbuffer
+	// (System Logs page) is layered on after the single-instance check
+	// below, so a second launch never opens the ring DB.
+	inner, closeLog := newFileHandler(cfg, dataDir)
 	defer closeLog()
+	logger := slog.New(inner)
 	slog.SetDefault(logger)
+
+	// The desktop app has no login page: create the station user on a
+	// fresh install so user-scoped endpoints work under the launch token.
+	cfg.EnsureStationUser = true
 
 	// Loopback only, OS-chosen port. Phase 4 adds an opt-in LAN listener.
 	cfg.HTTPAddr = "127.0.0.1:0"
@@ -90,6 +98,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan error, 1)
 
+	// showWindow is assigned once the window exists; a second launch
+	// (single-instance callback) only fires after wapp.Run starts.
+	var showWindow func()
+
 	wapp := application.New(application.Options{
 		Name:        "Graywolf",
 		Description: "APRS / AX.25 packet radio station",
@@ -100,7 +112,11 @@ func main() {
 		ErrorHandler: func(err error) {
 			logger.Error("desktop: wails error", "err", err)
 		},
-		SingleInstance: singleInstanceOptions(logger),
+		SingleInstance: singleInstanceOptions(logger, func() {
+			if showWindow != nil {
+				showWindow()
+			}
+		}),
 		Linux: application.LinuxOptions{
 			ProgramName:                   "graywolf",
 			DisableQuitOnLastWindowClosed: true,
@@ -111,6 +127,15 @@ func main() {
 		},
 	})
 
+	// Past the single-instance gate: attach the station's log ring.
+	stationLogger, logDB := app.SetupLogger(inner, cfg)
+	cfg.LogBuffer = logDB
+	if logDB != nil {
+		defer func() { _ = logDB.Close() }()
+	}
+	slog.SetDefault(stationLogger)
+	logger = stationLogger
+
 	window := wapp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "Graywolf",
@@ -119,13 +144,12 @@ func main() {
 		MinWidth:  800,
 		MinHeight: 560,
 		HTML:      startingHTML,
-		// Spike: leave devtools on so we can inspect WebGL / console
-		// errors on test machines. Phase 2 gates this behind -debug.
-		DevToolsEnabled:  true,
+		// Web inspector only with -debug (right-click > Inspect).
+		DevToolsEnabled:  cfg.Debug,
 		BackgroundColour: application.NewRGB(0x1b, 0x1d, 0x21),
 	})
 
-	showWindow := func() {
+	showWindow = func() {
 		window.Show()
 		window.Restore()
 		window.Focus()
@@ -167,7 +191,7 @@ func main() {
 
 	// Start the station off the UI thread; wapp.Run owns the main thread.
 	go func() {
-		runDone <- app.New(cfg, logger).Run(ctx)
+		runDone <- app.New(cfg, stationLogger).Run(ctx)
 	}()
 
 	go func() {
@@ -206,21 +230,28 @@ func newToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// setupLogger logs to stderr and to a file in the data dir (a GUI app
-// has no visible console on Windows).
-func setupLogger(cfg app.Config, dataDir string) (*slog.Logger, func()) {
+// maxLogBytes caps graywolf-desktop.log; checked once at startup.
+const maxLogBytes = 10 << 20
+
+// newFileHandler returns a text handler writing to stderr and to
+// graywolf-desktop.log in the data dir (a GUI app has no console on
+// Windows). A log over maxLogBytes is rotated to .1 at startup.
+func newFileHandler(cfg app.Config, dataDir string) (slog.Handler, func()) {
 	level := slog.LevelInfo
 	if cfg.Debug {
 		level = slog.LevelDebug
 	}
+	path := filepath.Join(dataDir, "graywolf-desktop.log")
+	if fi, err := os.Stat(path); err == nil && fi.Size() > maxLogBytes {
+		_ = os.Rename(path, path+".1")
+	}
 	var w io.Writer = os.Stderr
 	closeFn := func() {}
-	if f, err := os.OpenFile(filepath.Join(dataDir, "graywolf-desktop.log"),
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+	if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 		w = io.MultiWriter(os.Stderr, f)
 		closeFn = func() { _ = f.Close() }
 	}
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})), closeFn
+	return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}), closeFn
 }
 
 // applyDesktopDefaults replaces the headless defaults for the DB, history
