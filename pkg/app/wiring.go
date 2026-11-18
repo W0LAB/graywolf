@@ -1600,6 +1600,12 @@ func (a *App) wireHTTP(ctx context.Context) error {
 	// ack handler writes to LastSeenReleaseVersion.
 	webapi.RegisterReleaseNotes(apiSrv, apiMux, a.cfg.Version, a.authStore)
 
+	// Desktop-shell-only routes (auth-required). Absent unless the host
+	// shell supplies the hook, so headless/Android never expose them.
+	if a.cfg.OpenExternalURL != nil {
+		registerDesktopRoutes(apiMux, a.cfg.OpenExternalURL, a.logger)
+	}
+
 	mux.Handle("/api/", webauth.RequireAuth(a.authStore)(apiMux))
 
 	// /tiles/{slug}.pmtiles serves the cached PMTiles archives behind

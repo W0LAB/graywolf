@@ -2148,3 +2148,28 @@ unchanged by a GUI-only addition.
 Source: [`../../web/src/lib/desktopBridge.js`](../../web/src/lib/desktopBridge.js),
 [`../../web/src/lib/platform.js`](../../web/src/lib/platform.js),
 [`../../cmd/graywolf-desktop/go.mod`](../../cmd/graywolf-desktop/go.mod).
+
+### 72. The desktop shell owns shutdown: station first, GUI second, never wait on a dialog
+
+`cmd/graywolf-desktop` sets Wails `DisableDefaultSignalHandler: true` and
+handles SIGTERM/SIGINT itself (`signals_unix.go`), plus `WM_ENDSESSION`
+on Windows (`signals_windows.go`). Every quit path goes through
+`shell.quit`: `stopStation()` (bounded wait for `App.Stop`) runs before
+Wails `Quit`, and a 5 s watchdog then `os.Exit`s if the GUI is still up.
+
+Never make startup or shutdown wait on a Wails dialog's button callback.
+
+*Why:* with both Wails' handler and ours reacting to SIGTERM, the two
+`Quit` calls raced and the GTK loop never exited. An open modal dialog
+runs its own GTK/Win32 loop and blocks Wails' quit indefinitely (seen:
+process survived SIGTERM until `kill -9`), which would hang logout. On
+Linux `Dialog.Show()` returns immediately and a dismissed dialog (Esc /
+close) fires no callback; on Windows without a manifest the
+custom-button TaskDialog falls back to `MessageBox` and may map to no
+callback. So the "station already running" case attaches to that station
+with an informational dialog instead of asking a blocking question.
+
+Source: [`../../cmd/graywolf-desktop/shell.go`](../../cmd/graywolf-desktop/shell.go)
+(`quit`, `stopStation`, `start`, `attachToExisting`),
+[`../../cmd/graywolf-desktop/signals_unix.go`](../../cmd/graywolf-desktop/signals_unix.go),
+[`../../cmd/graywolf-desktop/signals_windows.go`](../../cmd/graywolf-desktop/signals_windows.go).

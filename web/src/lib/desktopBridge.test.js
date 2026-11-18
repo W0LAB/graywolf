@@ -82,3 +82,41 @@ test('Android bridge wins over a desktop token', () => {
   assert.equal(Platform.kind, 'android');
   assert.equal(Platform.hasLaunchToken, true);
 });
+
+test('isExternalUrl: other http(s) origins only', async () => {
+  const { isExternalUrl } = await import('./desktopBridge.js');
+  fakeEnv('http://127.0.0.1:4321/#/');
+  assert.equal(isExternalUrl('https://aprs.fi/'), true);
+  assert.equal(isExternalUrl('http://127.0.0.1:8080/'), true); // different port = other origin
+  assert.equal(isExternalUrl('/api/flare'), false);
+  assert.equal(isExternalUrl('#/map'), false);
+  assert.equal(isExternalUrl('http://127.0.0.1:4321/x'), false);
+  assert.equal(isExternalUrl('mailto:a@b.c'), false);
+  assert.equal(isExternalUrl('javascript:void 0'), false);
+});
+
+test('window.open of an external URL goes to the shell, not a popup', async () => {
+  const { installExternalLinkHandler } = await import('./desktopBridge.js');
+  fakeEnv('http://127.0.0.1:4321/#/');
+  const posted = [];
+  const popups = [];
+  const savedFetch = globalThis.fetch;
+  const savedOpen = globalThis.open;
+  const savedDoc = globalThis.document;
+  globalThis.fetch = async (url, init) => { posted.push([url, JSON.parse(init.body).url]); return { ok: true }; };
+  globalThis.open = (url) => { popups.push(url); return {}; };
+  globalThis.document = { addEventListener() {} };
+  try {
+    _setDesktopTokenForTests('tok');
+    installExternalLinkHandler();
+    assert.equal(globalThis.open('https://www.qrz.com/db/W0LAB'), null);
+    globalThis.open('/#/map');
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(posted, [['/api/desktop/open-url', 'https://www.qrz.com/db/W0LAB']]);
+    assert.deepEqual(popups, ['/#/map']);
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedOpen === undefined) delete globalThis.open; else globalThis.open = savedOpen;
+    if (savedDoc === undefined) delete globalThis.document; else globalThis.document = savedDoc;
+  }
+});

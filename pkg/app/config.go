@@ -123,6 +123,13 @@ type Config struct {
 	// cmd/graywolf-desktop; headless and Android leave it false.
 	EnsureStationUser bool
 
+	// OpenExternalURL, if non-nil, registers POST /api/desktop/open-url
+	// (auth-required), which hands an http(s) URL to this func. The
+	// desktop shell uses it to open external links in the system browser
+	// instead of inside its webview. Not part of the public OpenAPI
+	// surface; nil on headless and Android.
+	OpenExternalURL func(rawURL string) error
+
 	// LogBuffer is the standalone slog ring-buffer DB, set by main after
 	// setupLogger. nil when the buffer is disabled/unavailable; the
 	// /api/system-logs endpoint then reports available:false.

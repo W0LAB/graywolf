@@ -46,6 +46,61 @@ export function getDesktopToken() {
   return token;
 }
 
+// isExternalUrl reports whether href points at an http(s) origin other
+// than the station's own. Relative and same-origin links stay in-app.
+export function isExternalUrl(href) {
+  try {
+    const base = globalThis.location?.href || 'http://127.0.0.1/';
+    const u = new URL(href, base);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    return u.origin !== new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
+// openExternal asks the desktop shell to open url in the system browser
+// (POST /api/desktop/open-url; the bearer is added by secureFetch).
+export function openExternal(url) {
+  return globalThis.fetch('/api/desktop/open-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  }).catch(() => {});
+}
+
+let linkHandlerInstalled = false;
+
+// installExternalLinkHandler routes external links and window.open calls
+// to the system browser when running inside the desktop app. Neither
+// webview does that on its own: WebView2 opens a bare popup window and
+// WebKitGTK ignores target=_blank. No-op in a normal browser.
+export function installExternalLinkHandler() {
+  if (linkHandlerInstalled || !token) return;
+  const doc = globalThis.document;
+  if (!doc?.addEventListener) return;
+  linkHandlerInstalled = true;
+
+  doc.addEventListener('click', (ev) => {
+    if (ev.defaultPrevented || ev.button > 1) return;
+    const a = ev.target?.closest?.('a[href]');
+    if (!a) return;
+    const href = a.getAttribute('href');
+    if (!isExternalUrl(href)) return;
+    ev.preventDefault();
+    openExternal(new URL(href, globalThis.location.href).href);
+  }, true);
+
+  const originalOpen = globalThis.open?.bind(globalThis);
+  globalThis.open = function (url, ...rest) {
+    if (url != null && isExternalUrl(String(url))) {
+      openExternal(new URL(String(url), globalThis.location.href).href);
+      return null;
+    }
+    return originalOpen ? originalOpen(url, ...rest) : null;
+  };
+}
+
 // Test-only.
 export function _setDesktopTokenForTests(v) {
   token = v;

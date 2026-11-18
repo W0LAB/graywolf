@@ -10,10 +10,12 @@
 // that store's top-level fetches fire before the wrappers install.
 
 import { installSecureFetch, installSecureWebSocket } from './lib/secureFetch.js';
-import { captureDesktopToken } from './lib/desktopBridge.js';
+import { captureDesktopToken, installExternalLinkHandler } from './lib/desktopBridge.js';
 
 // Desktop shell (cmd/graywolf-desktop) passes its per-launch token in
 // the initial URL; capture it before anything fetches.
 captureDesktopToken();
 installSecureFetch();
+// Desktop app only: external links open in the system browser.
+installExternalLinkHandler();
 installSecureWebSocket();

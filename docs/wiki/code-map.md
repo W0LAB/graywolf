@@ -262,7 +262,7 @@ Mirrors the tactical-callsign machinery end-to-end.
 
 ## Native desktop shell (`cmd/graywolf-desktop/`)
 
-In development (Phases 0-1 done), not shipped or wired into CI yet. Plan (local, `.context/` is gitignored):
+In development (Phases 0-2 done), not shipped or wired into CI yet. Plan (local, `.context/` is gitignored):
 [`../../.context/2026-11-17-native-desktop-shell.md`](../../.context/2026-11-17-native-desktop-shell.md).
 
 | Concern | Where |
@@ -276,7 +276,12 @@ In development (Phases 0-1 done), not shipped or wired into CI yet. Plan (local,
 | Station user on a fresh install (no login page, so none is ever created otherwise) | `app.Config.EnsureStationUser` -> `ensureStationUser` in [`../../pkg/app/station_user.go`](../../pkg/app/station_user.go): user `station`, random unknown password, created via `CreateFirstUser` |
 | Logging | `graywolf-desktop.log` in the data dir (rotated to `.1` past 10 MB at startup) + the shared logbuffer ring via `app.SetupLogger` ([`../../pkg/app/logsetup.go`](../../pkg/app/logsetup.go), also used by `cmd/graywolf`), attached only after the single-instance check |
 | Web inspector | only with `-debug` (`DevToolsEnabled: cfg.Debug`) |
-| Shutdown | tray Quit, window-manager quit, or SIGTERM (Wails turns it into a quit) -> cancel ctx -> `App.Stop`; modem exits with its parent even on a hard kill |
+| Shutdown | every path runs `shell.quit` ([`../../cmd/graywolf-desktop/shell.go`](../../cmd/graywolf-desktop/shell.go)): `stopStation` (cancel ctx -> `App.Stop`, bounded) first, then Wails `Quit`, with a 5 s exit watchdog. Triggers: tray Quit, window close when there is no tray, SIGTERM/SIGINT (`signals_unix.go`; Wails' default handler is disabled), Windows `WM_ENDSESSION` (`signals_windows.go`, stops the station synchronously). See [invariant 72](invariants.md). Modem exits with its parent even on a hard kill |
+| Window close | hides to the tray, one-time notice persisted in `desktop-state.json` (`state.go`); quits instead when no tray is available |
+| Tray | `buildTray` in `shell.go`: status line + tooltip polled from the station's own `/api/status` every 10 s (`status.go`), Open, "Start Graywolf when I log in" (Wails autostart, launches with `-hidden`), Quit |
+| Already-running station | `existing.go`: before starting its own station, probes the `-http` address (default `127.0.0.1:8080`) for the public `/api/version` fingerprint; if a station answers, the window shows it (cookie login) and no second station/modem starts |
+| External links | SPA `installExternalLinkHandler` (`desktopBridge.js`) intercepts other-origin `<a>` clicks and `window.open`, POSTs to `/api/desktop/open-url` ([`../../pkg/app/desktop_routes.go`](../../pkg/app/desktop_routes.go), registered only when `Config.OpenExternalURL` is set; http/https only) -> system browser |
+| Windows resources | [`../../cmd/graywolf-desktop/winres/winres.json`](../../cmd/graywolf-desktop/winres/winres.json): icon at resource ID 3 (Wails loads that ID), manifest (Common Controls v6 for TaskDialog, per-monitor-v2 DPI), version info. Compiled to a gitignored `*.syso` with go-winres; not yet wired into a build target |
 | Build | own Go module (`cmd/graywolf-desktop/go.mod`, `replace` to repo root); see [build-pipelines](build-pipelines.md) and [invariant 71](invariants.md) |
 
 ## Go service: diagnostic flare CLI

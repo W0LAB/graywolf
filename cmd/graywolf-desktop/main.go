@@ -1,6 +1,6 @@
-// Command graywolf-desktop is the native desktop shell for Graywolf on
-// Windows and Linux (Phase 0 spike -- see
-// .context/2026-11-17-native-desktop-shell.md).
+// Command graywolf-desktop is the native desktop app for Graywolf on
+// Windows and Linux. Plan: .context/2026-11-17-native-desktop-shell.md
+// (local); wiki: docs/wiki/code-map.md "Native desktop shell".
 //
 // It runs the same app.App as the headless `graywolf` binary, in
 // process. That App spawns graywolf-modem (sibling binary) exactly as it
@@ -26,14 +26,10 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
-	"sync"
-	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
-	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/chrissnell/graywolf/pkg/app"
 )
@@ -48,13 +44,31 @@ var iconPNG []byte
 
 const singleInstanceID = "com.nw5w.graywolf.desktop"
 
+// hiddenFlag starts the app in the tray without showing the window
+// (used by start-at-login). Desktop-only, so it is stripped before the
+// shared app.ParseFlags sees the arguments.
+const hiddenFlag = "-hidden"
+
 const startingHTML = `<!doctype html><html><head><meta charset="utf-8">
 <style>html,body{height:100%;margin:0;background:#1b1d21;color:#c9ccd1;
 font:15px system-ui,sans-serif;display:flex;align-items:center;justify-content:center}</style>
 </head><body>Starting Graywolf&hellip;</body></html>`
 
+// splitDesktopFlags removes desktop-only flags from args.
+func splitDesktopFlags(args []string) (hidden bool, rest []string) {
+	for _, a := range args {
+		if a == hiddenFlag || a == "-"+hiddenFlag {
+			hidden = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return hidden, rest
+}
+
 func main() {
-	cfg, err := app.ParseFlags(os.Args[1:])
+	hidden, args := splitDesktopFlags(os.Args[1:])
+	cfg, err := app.ParseFlags(args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			os.Exit(0)
@@ -64,6 +78,11 @@ func main() {
 	}
 	cfg.Version = Version
 	cfg.GitCommit = GitCommit
+
+	// Where a headless graywolf on this machine would listen (-http,
+	// default 127.0.0.1:8080): probed at startup to avoid running two
+	// stations on one radio.
+	probeAddr := cfg.HTTPAddr
 
 	dataDir, err := applyDesktopDefaults(&cfg)
 	if err != nil {
@@ -79,10 +98,15 @@ func main() {
 	logger := slog.New(inner)
 	slog.SetDefault(logger)
 
-	// The desktop app has no login page: create the station user on a
-	// fresh install so user-scoped endpoints work under the launch token.
-	cfg.EnsureStationUser = true
+	busErr := sessionBusError()
+	trayOK := busErr == nil
+	if !trayOK {
+		logger.Warn("desktop: no session D-Bus; tray icon and single-instance lock unavailable, closing the window will quit", "err", busErr)
+	}
 
+	// No login page in the app: create the station user on a fresh
+	// install so user-scoped endpoints work under the launch token.
+	cfg.EnsureStationUser = true
 	// Loopback only, OS-chosen port. Phase 4 adds an opt-in LAN listener.
 	cfg.HTTPAddr = "127.0.0.1:0"
 	token, err := newToken()
@@ -92,31 +116,47 @@ func main() {
 	}
 	cfg.BearerToken = token
 
-	bound := make(chan net.Addr, 1)
-	cfg.OnHTTPListenerBound = func(a net.Addr) { bound <- a }
-
 	ctx, cancel := context.WithCancel(context.Background())
-	runDone := make(chan error, 1)
+	sh := &shell{
+		logger:  logger,
+		token:   token,
+		dataDir: dataDir,
+		state:   loadState(dataDir, logger),
+		trayOK:  trayOK,
+		ctx:     ctx,
+		cancel:  cancel,
+		bound:   make(chan net.Addr, 1),
+		runDone: make(chan error, 1),
+	}
+	cfg.OnHTTPListenerBound = func(a net.Addr) { sh.bound <- a }
 
-	// showWindow is assigned once the window exists; a second launch
-	// (single-instance callback) only fires after wapp.Run starts.
-	var showWindow func()
+	var single *application.SingleInstanceOptions
+	if trayOK { // on Linux the lock is a session-bus name
+		single = &application.SingleInstanceOptions{
+			UniqueID: singleInstanceID,
+			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+				if sh.window != nil {
+					sh.showWindow()
+				}
+			},
+		}
+	}
 
-	wapp := application.New(application.Options{
+	sh.wapp = application.New(application.Options{
 		Name:        "Graywolf",
 		Description: "APRS / AX.25 packet radio station",
 		Icon:        iconPNG,
-		// Without these, Wails' own fatal errors (e.g. single-instance
-		// lock failure) exit the process with no output at all.
+		// Without these, Wails' own fatal errors exit the process with
+		// no output at all.
 		Logger: logger.With("component", "wails"),
 		ErrorHandler: func(err error) {
 			logger.Error("desktop: wails error", "err", err)
 		},
-		SingleInstance: singleInstanceOptions(logger, func() {
-			if showWindow != nil {
-				showWindow()
-			}
-		}),
+		SingleInstance: single,
+		// signals_*.go owns SIGTERM/SIGINT: stop the station first, then
+		// the GUI, with a watchdog. Two handlers racing into Quit is what
+		// we avoid here.
+		DisableDefaultSignalHandler: true,
 		Linux: application.LinuxOptions{
 			ProgramName:                   "graywolf",
 			DisableQuitOnLastWindowClosed: true,
@@ -124,6 +164,7 @@ func main() {
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: true,
 			WebviewUserDataPath:           filepath.Join(dataDir, "webview"),
+			WndProcInterceptor:            sessionEndInterceptor(sh),
 		},
 	})
 
@@ -134,9 +175,12 @@ func main() {
 		defer func() { _ = logDB.Close() }()
 	}
 	slog.SetDefault(stationLogger)
-	logger = stationLogger
+	sh.logger = stationLogger
 
-	window := wapp.Window.NewWithOptions(application.WebviewWindowOptions{
+	cfg.OpenExternalURL = func(u string) error { return sh.wapp.Browser.OpenURL(u) }
+	sh.cfg = cfg
+
+	sh.window = sh.wapp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "Graywolf",
 		Width:     1400,
@@ -144,82 +188,22 @@ func main() {
 		MinWidth:  800,
 		MinHeight: 560,
 		HTML:      startingHTML,
+		// Start-at-login opens straight to the tray -- but only if there
+		// is a tray to come back from.
+		Hidden: hidden && trayOK,
 		// Web inspector only with -debug (right-click > Inspect).
 		DevToolsEnabled:  cfg.Debug,
 		BackgroundColour: application.NewRGB(0x1b, 0x1d, 0x21),
 	})
+	sh.buildTray()
+	sh.registerHooks(probeAddr)
+	sh.handleSessionEnd()
 
-	showWindow = func() {
-		window.Show()
-		window.Restore()
-		window.Focus()
+	if err := sh.wapp.Run(); err != nil {
+		sh.logger.Error("desktop shell", "err", err)
 	}
-
-	// Closing the window hides it; the station keeps running in the tray.
-	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		window.Hide()
-		e.Cancel()
-	})
-
-	var quitOnce sync.Once
-	quit := func() {
-		quitOnce.Do(func() {
-			logger.Info("desktop: quit requested; stopping station")
-			cancel()
-			select {
-			case err := <-runDone:
-				if err != nil {
-					logger.Error("graywolf exited with error", "err", err)
-				}
-			case <-time.After(cfg.ShutdownTimeout + 5*time.Second):
-				logger.Error("desktop: station did not stop in time")
-			}
-			wapp.Quit()
-		})
-	}
-
-	menu := application.NewMenu()
-	menu.Add("Open Graywolf").OnClick(func(*application.Context) { showWindow() })
-	menu.AddSeparator()
-	menu.Add("Quit Graywolf").OnClick(func(*application.Context) { go quit() })
-
-	tray := wapp.SystemTray.New()
-	tray.SetIcon(iconPNG)
-	tray.SetLabel("Graywolf")
-	tray.SetMenu(menu)
-	tray.OnClick(showWindow)
-
-	// Start the station off the UI thread; wapp.Run owns the main thread.
-	go func() {
-		runDone <- app.New(cfg, stationLogger).Run(ctx)
-	}()
-
-	go func() {
-		select {
-		case addr := <-bound:
-			u := url.URL{
-				Scheme:   "http",
-				Host:     addr.String(),
-				Path:     "/",
-				RawQuery: url.Values{"gwdesktop": {token}}.Encode(),
-			}
-			logger.Info("desktop: station listening", "addr", addr.String())
-			window.SetURL(u.String())
-		case err := <-runDone:
-			// Station failed before the HTTP listener came up.
-			logger.Error("graywolf failed to start", "err", err)
-			msg := fmt.Sprintf("Graywolf could not start:\n\n%v\n\nLog: %s", err, filepath.Join(dataDir, "graywolf-desktop.log"))
-			wapp.Dialog.Error().SetTitle("Graywolf").SetMessage(msg).Show()
-			runDone <- err // let quit() observe it
-			go quit()
-		}
-	}()
-
-	if err := wapp.Run(); err != nil {
-		logger.Error("desktop shell", "err", err)
-	}
-	// Window manager / OS ended the app without going through the tray.
-	quit()
+	// Window manager / OS / SIGTERM ended the app without the tray.
+	sh.quit()
 }
 
 func newToken() (string, error) {
