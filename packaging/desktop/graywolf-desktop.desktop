@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Graywolf
+GenericName=APRS Station
+Comment=APRS radio transceiver, digipeater, and Internet gateway
+Exec=graywolf-desktop
+Icon=graywolf
+Terminal=false
+Categories=HamRadio;Network;
+Keywords=APRS;AX.25;packet;radio;ham;igate;digipeater;
+StartupNotify=true

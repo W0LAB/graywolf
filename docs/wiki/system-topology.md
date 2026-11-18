@@ -288,6 +288,17 @@ Failure modes:
 | `/var/lib/graywolf/{graywolf.db,graywolf-history.db,tiles/}` | systemd `StateDirectory=graywolf` |
 | `graywolf` user; groups `audio`, `dialout`, `plugdev`, `gpio` | [`../../packaging/scripts/postinstall.sh`](../../packaging/scripts/postinstall.sh) |
 
+Desktop package (`graywolf-desktop` deb/rpm, AUR `graywolf-aprs-desktop`)
+is self-contained and installs no service; it can sit beside the service
+package. Runs as the logged-in user with data in
+`$XDG_DATA_HOME/graywolf` (default `~/.local/share/graywolf`).
+
+| Path | Source |
+|---|---|
+| `/usr/lib/graywolf-desktop/{graywolf-desktop,graywolf-modem}` (AUR: `/usr/lib/graywolf-aprs-desktop/`), `/usr/bin/graywolf-desktop` symlink | [`../../packaging/desktop/nfpm.yaml.in`](../../packaging/desktop/nfpm.yaml.in), [`../../packaging/aur-desktop/PKGBUILD`](../../packaging/aur-desktop/PKGBUILD) |
+| `/usr/share/applications/graywolf-desktop.desktop`, `/usr/share/icons/hicolor/*/apps/graywolf.{png,svg}` | [`../../packaging/desktop/`](../../packaging/desktop/) (PNGs rendered from `assets/graywolf.svg`) |
+| `/usr/lib/udev/rules.d/70-graywolf-desktop.rules` (`TAG+="uaccess"` on CM108/AIOC/SSS hidraw: PTT for the seat user without `plugdev`) | [`../../packaging/desktop/70-graywolf-desktop.rules`](../../packaging/desktop/70-graywolf-desktop.rules) |
+
 ## graywolf flare CLI (diagnostic submission)
 
 Path through the system on `graywolf flare` invocation:
@@ -311,6 +322,6 @@ The wire contract (`flareschema.Flare` -> `flareschema.SubmitResponse`) is the o
 | Arch AUR (`graywolf-aprs`) | [`../../packaging/aur/`](../../packaging/aur/) |
 | Windows installer | [`../../packaging/nsis/graywolf.nsi`](../../packaging/nsis/graywolf.nsi) (NSIS, hand-driven outside goreleaser) |
 | OCI image | `ghcr.io/chrissnell/graywolf:<tag>` (linux amd64/arm64 manifest list) |
-| Native desktop app (spike, not shipped) | [`../../cmd/graywolf-desktop/`](../../cmd/graywolf-desktop/) -- same `app.App` in-process, SPA in a Wails v3 window on a loopback bearer-gated listener; spawns `graywolf-modem` like headless |
+| Native desktop app (branch `desktop-app`, not yet released upstream) | [`../../cmd/graywolf-desktop/`](../../cmd/graywolf-desktop/) -- same `app.App` in-process, SPA in a Wails v3 window on a loopback bearer-gated listener; spawns `graywolf-modem` like headless. Ships in the NSIS installer (main shortcut), `graywolf-desktop` deb/rpm/tar.gz (linux amd64/arm64), AUR `graywolf-aprs-desktop` |
 
 Build details and triggers live in [`build-pipelines.md`](build-pipelines.md).

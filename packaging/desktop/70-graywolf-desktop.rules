@@ -1,0 +1,10 @@
+# Graywolf desktop app: give the logged-in desktop user access to PTT
+# HID devices without plugdev membership (systemd-logind "uaccess"; must
+# sort before 73-seat-late.rules). The headless package's
+# 99-graywolf-cm108.rules (GROUP=plugdev) still applies for the service.
+# C-Media CM108/CM108B/CM108AH/CM109/CM119
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0d8c", TAG+="uaccess"
+# AIOC (All-In-One-Cable)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", TAG+="uaccess"
+# SSS
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0c76", TAG+="uaccess"

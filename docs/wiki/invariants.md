@@ -27,7 +27,10 @@ Source: [`../../proto/graywolf.proto`](../../proto/graywolf.proto). Go:
 Source: bump targets in [`../../Makefile`](../../Makefile)
 (`VERSION`, `graywolf-modem/Cargo.toml`, `Cargo.lock`,
 `packaging/aur/PKGBUILD`, `packaging/aur/.SRCINFO`,
-`docs/handbook/installation.html`).
+`packaging/aur-desktop/PKGBUILD`, `packaging/aur-desktop/.SRCINFO`,
+`docs/handbook/installation.html`). The desktop app's own version stamps
+(`-X main.Version`, the Windows version resource, the desktop deb/rpm)
+come from the tag in `release.yml`, not from a file.
 
 ### 4. Release notes precede the bump
 

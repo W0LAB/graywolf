@@ -53,7 +53,7 @@ SWAGGER_UI_VENDOR := $(DOCS_HANDBOOK)/vendor/swagger-ui
 # api-client-check guards catch.
 GENERATED_SPEC_FILES := $(DOCS_GEN_DIR)/swagger.json $(DOCS_GEN_DIR)/swagger.yaml $(WEB_DIR)/src/api/generated/api.d.ts
 
-.PHONY: all build release test bench clean clean-web distclean check fmt lint doc run-bench proto go-build go-test go-fuzz web graywolf graywolf-quick version bump-minor bump-point bump-beta handbook-sync handbook-sync-ssh docs docs-api-html docs-check docs-lint api-client api-client-check flareschema install-hooks android-screenshots android-screenshots-seed android-play-check android-promote android-upload-listing
+.PHONY: all build release test bench clean clean-web distclean check fmt lint doc run-bench proto go-build go-test go-fuzz web graywolf graywolf-quick graywolf-desktop graywolf-desktop-windows desktop-test version bump-minor bump-point bump-beta handbook-sync handbook-sync-ssh docs docs-api-html docs-check docs-lint api-client api-client-check flareschema install-hooks android-screenshots android-screenshots-seed android-play-check android-promote android-upload-listing
 
 all: release web
 	mkdir -p bin
@@ -164,6 +164,34 @@ graywolf-quick: web
 	}
 	go build -ldflags="$(GO_LDFLAGS)" -o bin/graywolf ./cmd/graywolf/
 
+# Native desktop app (cmd/graywolf-desktop, its own Go module -- see
+# docs/wiki/build-pipelines.md). Linux needs cgo + libwebkit2gtk-4.1-dev
+# and libgtk-3-dev; the binary must sit next to graywolf-modem.
+DESKTOP_DIR := cmd/graywolf-desktop
+# Windows resources (icon, manifest, version info). Pinned; run via
+# `go run` so it never lands in either go.mod.
+GO_WINRES   := github.com/tc-hib/go-winres@v0.3.3
+# Windows wants a 4-part numeric version: 0.15.0-beta.1 -> 0.15.0.0
+VERSION_NUMERIC := $(firstword $(subst -, ,$(VERSION))).0
+
+graywolf-desktop: release web
+	mkdir -p bin
+	cp target/release/graywolf-modem bin/
+	cd $(DESKTOP_DIR) && CGO_ENABLED=1 go build -tags gtk3,production \
+	  -ldflags="$(GO_LDFLAGS)" -o $(abspath bin/graywolf-desktop) .
+
+# Cross-compiles from any host (no cgo on Windows). Produces only the
+# desktop exe; graywolf-modem.exe comes from the Windows Rust build.
+graywolf-desktop-windows: web
+	mkdir -p bin
+	cd $(DESKTOP_DIR) && go run $(GO_WINRES) make --in winres/winres.json --arch amd64 \
+	  --product-version $(VERSION_NUMERIC) --file-version $(VERSION_NUMERIC)
+	cd $(DESKTOP_DIR) && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags production \
+	  -ldflags="$(GO_LDFLAGS) -H=windowsgui" -o $(abspath bin/graywolf-desktop.exe) .
+
+desktop-test:
+	cd $(DESKTOP_DIR) && go vet -tags gtk3 ./... && go test -race -tags gtk3 ./...
+
 run-bench: release
 	@echo "Usage: make run-bench FLAC=<file> [ITER=5]"
 	@test -n "$(FLAC)" || { echo "error: FLAC not set"; exit 1; }
@@ -184,12 +212,15 @@ bump-minor:
 	@echo "$(NEW)" > VERSION
 	@sed -i.bak 's/^version = ".*"/version = "$(NEW)"/' $(MODEM_DIR)/Cargo.toml && rm $(MODEM_DIR)/Cargo.toml.bak
 	@sed -i.bak 's/^pkgver=.*/pkgver=$(NEW)/' packaging/aur/PKGBUILD && rm packaging/aur/PKGBUILD.bak
+	@sed -i.bak 's/^pkgver=.*/pkgver=$(NEW)/' packaging/aur-desktop/PKGBUILD && rm packaging/aur-desktop/PKGBUILD.bak
+	@sed -i.bak 's/pkgver = .*/pkgver = $(NEW)/' packaging/aur-desktop/.SRCINFO && rm packaging/aur-desktop/.SRCINFO.bak
+	@sed -i.bak 's|source = graywolf-.*\.tar\.gz::.*|source = graywolf-$(NEW).tar.gz::https://github.com/chrissnell/graywolf/archive/v$(NEW).tar.gz|' packaging/aur-desktop/.SRCINFO && rm packaging/aur-desktop/.SRCINFO.bak
 	@sed -i.bak 's/pkgver = .*/pkgver = $(NEW)/' packaging/aur/.SRCINFO && rm packaging/aur/.SRCINFO.bak
 	@sed -i.bak 's|source = graywolf-.*\.tar\.gz::.*|source = graywolf-$(NEW).tar.gz::https://github.com/chrissnell/graywolf/archive/v$(NEW).tar.gz|' packaging/aur/.SRCINFO && rm packaging/aur/.SRCINFO.bak
 	@sed -i.bak 's|v[0-9]*\.[0-9]*\.[0-9]*-abc1234|v$(NEW)-abc1234|' docs/handbook/installation.html && rm docs/handbook/installation.html.bak
 	$(CARGO) update $(MANIFEST)
 	@echo "New version: $(NEW)"
-	git add VERSION $(MODEM_DIR)/Cargo.toml Cargo.lock pkg/releasenotes/notes.yaml packaging/aur/PKGBUILD packaging/aur/.SRCINFO docs/handbook/installation.html $(GENERATED_SPEC_FILES)
+	git add VERSION $(MODEM_DIR)/Cargo.toml Cargo.lock pkg/releasenotes/notes.yaml packaging/aur/PKGBUILD packaging/aur/.SRCINFO packaging/aur-desktop/PKGBUILD packaging/aur-desktop/.SRCINFO docs/handbook/installation.html $(GENERATED_SPEC_FILES)
 	git commit -m "Release v$(NEW)"
 	git tag "v$(NEW)"
 	git push $(GIT_REMOTE) && git push $(GIT_REMOTE) "v$(NEW)"
@@ -206,12 +237,15 @@ bump-point:
 	@echo "$(NEW)" > VERSION
 	@sed -i.bak 's/^version = ".*"/version = "$(NEW)"/' $(MODEM_DIR)/Cargo.toml && rm $(MODEM_DIR)/Cargo.toml.bak
 	@sed -i.bak 's/^pkgver=.*/pkgver=$(NEW)/' packaging/aur/PKGBUILD && rm packaging/aur/PKGBUILD.bak
+	@sed -i.bak 's/^pkgver=.*/pkgver=$(NEW)/' packaging/aur-desktop/PKGBUILD && rm packaging/aur-desktop/PKGBUILD.bak
+	@sed -i.bak 's/pkgver = .*/pkgver = $(NEW)/' packaging/aur-desktop/.SRCINFO && rm packaging/aur-desktop/.SRCINFO.bak
+	@sed -i.bak 's|source = graywolf-.*\.tar\.gz::.*|source = graywolf-$(NEW).tar.gz::https://github.com/chrissnell/graywolf/archive/v$(NEW).tar.gz|' packaging/aur-desktop/.SRCINFO && rm packaging/aur-desktop/.SRCINFO.bak
 	@sed -i.bak 's/pkgver = .*/pkgver = $(NEW)/' packaging/aur/.SRCINFO && rm packaging/aur/.SRCINFO.bak
 	@sed -i.bak 's|source = graywolf-.*\.tar\.gz::.*|source = graywolf-$(NEW).tar.gz::https://github.com/chrissnell/graywolf/archive/v$(NEW).tar.gz|' packaging/aur/.SRCINFO && rm packaging/aur/.SRCINFO.bak
 	@sed -i.bak 's|v[0-9]*\.[0-9]*\.[0-9]*-abc1234|v$(NEW)-abc1234|' docs/handbook/installation.html && rm docs/handbook/installation.html.bak
 	$(CARGO) update $(MANIFEST)
 	@echo "New version: $(NEW)"
-	git add VERSION $(MODEM_DIR)/Cargo.toml Cargo.lock pkg/releasenotes/notes.yaml packaging/aur/PKGBUILD packaging/aur/.SRCINFO docs/handbook/installation.html $(GENERATED_SPEC_FILES)
+	git add VERSION $(MODEM_DIR)/Cargo.toml Cargo.lock pkg/releasenotes/notes.yaml packaging/aur/PKGBUILD packaging/aur/.SRCINFO packaging/aur-desktop/PKGBUILD packaging/aur-desktop/.SRCINFO docs/handbook/installation.html $(GENERATED_SPEC_FILES)
 	git commit -m "Release v$(NEW)"
 	git tag "v$(NEW)"
 	git push $(GIT_REMOTE) && git push $(GIT_REMOTE) "v$(NEW)"

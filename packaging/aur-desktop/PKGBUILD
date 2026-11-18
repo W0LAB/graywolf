@@ -1,0 +1,72 @@
+# Maintainer: Chris Snell
+#
+# Graywolf desktop app (native window + tray). Self-contained: installs
+# its own graywolf-modem under /usr/lib/graywolf-aprs-desktop so it can sit
+# beside graywolf-aprs (the headless service) without file conflicts.
+pkgname=graywolf-aprs-desktop
+pkgver=0.14.14
+pkgrel=1
+pkgdesc='APRS radio transceiver, digipeater, and Internet gateway (desktop app)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/chrissnell/graywolf'
+license=('GPL-2.0-only')
+depends=('glibc' 'gtk3' 'webkit2gtk-4.1' 'alsa-lib' 'systemd-libs')
+makedepends=('go' 'rust' 'cargo' 'nodejs' 'npm' 'protobuf' 'pkgconf')
+install=graywolf-aprs-desktop.install
+source=("graywolf-${pkgver}.tar.gz::${url}/archive/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "graywolf-${pkgver}/cmd/graywolf-desktop"
+  go mod download
+}
+
+build() {
+  cd "graywolf-${pkgver}"
+
+  # Svelte frontend (populates web/dist for Go embed)
+  cd web
+  npm install
+  npm run build
+  cd ..
+
+  # Desktop binary: its own Go module; cgo for WebKitGTK.
+  cd cmd/graywolf-desktop
+  export CGO_ENABLED=1
+  export CGO_CFLAGS="${CFLAGS}" CGO_CPPFLAGS="${CPPFLAGS}" CGO_LDFLAGS="${LDFLAGS}"
+  go build -trimpath -buildmode=pie -tags gtk3,production \
+    -ldflags "-w -s -linkmode=external -X main.Version=${pkgver} -X main.GitCommit=${pkgver}" \
+    -o "${srcdir}/graywolf-desktop" .
+  cd ../..
+
+  # Rust modem binary
+  cd graywolf-modem
+  export GRAYWOLF_VERSION="${pkgver}"
+  export GRAYWOLF_GIT_COMMIT="${pkgver}"
+  cargo build --release
+  cd ..
+  cp target/release/graywolf-modem "${srcdir}/graywolf-modem"
+}
+
+package() {
+  cd "graywolf-${pkgver}"
+
+  local libdir="${pkgdir}/usr/lib/${pkgname}"
+  install -Dm755 "${srcdir}/graywolf-desktop" "${libdir}/graywolf-desktop"
+  install -Dm755 "${srcdir}/graywolf-modem"   "${libdir}/graywolf-modem"
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -s "/usr/lib/${pkgname}/graywolf-desktop" "${pkgdir}/usr/bin/graywolf-desktop"
+
+  install -Dm644 packaging/desktop/graywolf-desktop.desktop \
+    "${pkgdir}/usr/share/applications/graywolf-desktop.desktop"
+  install -Dm644 assets/graywolf.svg \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/graywolf.svg"
+  local s
+  for s in 16 32 48 64 128 256 512; do
+    install -Dm644 "packaging/desktop/icons/graywolf-${s}.png" \
+      "${pkgdir}/usr/share/icons/hicolor/${s}x${s}/apps/graywolf.png"
+  done
+  install -Dm644 packaging/desktop/70-graywolf-desktop.rules \
+    "${pkgdir}/usr/lib/udev/rules.d/70-graywolf-desktop.rules"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

@@ -190,6 +190,179 @@ jobs:
           path: web/dist/
           retention-days: 1
 
+  # Native desktop app (cmd/graywolf-desktop, its own Go module). See
+  # docs/wiki/build-pipelines.md. Windows cross-compiles (no cgo);
+  # Linux needs cgo + WebKitGTK, built in Debian 12 so the binary's glibc
+  # floor (2.36) covers Debian 12+, Ubuntu 22.04+ and current Fedora.
+  desktop-windows:
+    name: Desktop app (windows-amd64)
+    runs-on: ubuntu-latest
+    needs: frontend-build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v5
+        with:
+          name: frontend-dist
+          path: web/dist/
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cmd/graywolf-desktop/go.mod
+          cache-dependency-path: cmd/graywolf-desktop/go.sum
+
+      - name: Compute version metadata
+        id: ver
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$(cat VERSION)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          # 4-part numeric for the Windows version resource: 0.15.0-beta.1 -> 0.15.0.0
+          echo "numeric=${v%%-*}.0" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD | cut -c1-8)" >> "$GITHUB_OUTPUT"
+
+      # Icon, manifest (Common Controls v6 for task dialogs, per-monitor
+      # DPI) and version info, linked in via the generated .syso.
+      - name: Generate Windows resources
+        working-directory: cmd/graywolf-desktop
+        run: |
+          go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64 \
+            --product-version "${{ steps.ver.outputs.numeric }}" --file-version "${{ steps.ver.outputs.numeric }}"
+          ls -l *.syso
+
+      - name: Build
+        working-directory: cmd/graywolf-desktop
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          go build -trimpath -tags production \
+            -ldflags "-s -w -H=windowsgui -X main.Version=${{ steps.ver.outputs.version }} -X main.GitCommit=${{ steps.ver.outputs.commit }}" \
+            -o ../../graywolf-desktop.exe .
+
+      - name: Upload desktop exe
+        uses: actions/upload-artifact@v5
+        with:
+          name: desktop-windows-amd64
+          path: graywolf-desktop.exe
+          retention-days: 1
+
+  desktop-linux:
+    name: Desktop app (linux-${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    needs: [rust-build, frontend-build]
+    container: debian:bookworm
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential pkg-config git ca-certificates curl \
+            libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v5
+        with:
+          name: frontend-dist
+          path: web/dist/
+
+      - name: Download modem
+        uses: actions/download-artifact@v5
+        with:
+          name: rust-linux-${{ matrix.arch }}
+          path: dist-desktop/
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cmd/graywolf-desktop/go.mod
+          cache-dependency-path: cmd/graywolf-desktop/go.sum
+
+      - name: Compute version metadata
+        id: ver
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$(cat VERSION)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD | cut -c1-8)" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        working-directory: cmd/graywolf-desktop
+        run: go vet -tags gtk3 ./... && go test -tags gtk3 ./...
+
+      - name: Build
+        working-directory: cmd/graywolf-desktop
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          go build -trimpath -tags gtk3,production \
+            -ldflags "-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.GitCommit=${{ steps.ver.outputs.commit }}" \
+            -o ../../dist-desktop/graywolf-desktop .
+          chmod +x ../../dist-desktop/graywolf-desktop ../../dist-desktop/graywolf-modem
+
+      - name: Package (deb, rpm, tar.gz)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.0
+          v="${{ steps.ver.outputs.version }}"
+          sed -e "s/@VERSION@/$v/" -e "s/@ARCH@/${{ matrix.arch }}/" packaging/desktop/nfpm.yaml.in > nfpm-desktop.yaml
+          mkdir -p out
+          "$(go env GOPATH)/bin/nfpm" package --config nfpm-desktop.yaml --packager deb --target out/
+          "$(go env GOPATH)/bin/nfpm" package --config nfpm-desktop.yaml --packager rpm --target out/
+          case "${{ matrix.arch }}" in amd64) a=x86_64 ;; *) a="${{ matrix.arch }}" ;; esac
+          t="graywolf-desktop_${v}_linux_${a}"
+          mkdir -p "$t"
+          cp dist-desktop/graywolf-desktop dist-desktop/graywolf-modem LICENSE "$t/"
+          cp packaging/desktop/graywolf-desktop.desktop packaging/desktop/70-graywolf-desktop.rules "$t/"
+          cp packaging/desktop/icons/graywolf-256.png "$t/graywolf.png"
+          tar -czf "out/$t.tar.gz" "$t"
+          ls -l out/
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v5
+        with:
+          name: desktop-linux-${{ matrix.arch }}
+          path: out/*
+          retention-days: ${{ github.event_name == 'workflow_dispatch' && 7 || 1 }}
+
+  desktop-publish:
+    name: Publish desktop packages
+    runs-on: ubuntu-latest
+    needs: [release, desktop-linux]
+    if: github.event_name != 'workflow_dispatch'
+    steps:
+      - name: Download Linux desktop packages
+        uses: actions/download-artifact@v5
+        with:
+          pattern: desktop-linux-*
+          merge-multiple: true
+          path: out/
+
+      - name: Upload to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd out
+          sha256sum * > checksums-desktop.txt
+          gh release upload "${{ github.ref_name }}" * --clobber --repo "${{ github.repository }}"
+
   release:
     name: GoReleaser (Go + Docker + Packages)
     runs-on: ubuntu-latest
@@ -310,12 +483,10 @@ jobs:
   installer:
     name: Windows Installer
     runs-on: windows-latest
-    needs: release
-    # NSIS computes VIProductVersion from github.ref_name and requires
-    # X.X.X.X format. On workflow_dispatch the ref is a branch name
-    # ("feat/foo") which fails that check. The real-tag release path
-    # (push tag v*) still runs as before.
-    if: github.event_name != 'workflow_dispatch'
+    needs: [release, desktop-windows]
+    # On workflow_dispatch the ref is a branch name, so the version comes
+    # from the VERSION file and the installer is kept as a workflow
+    # artifact instead of being attached to a release.
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -332,28 +503,62 @@ jobs:
           name: rust-windows-amd64
           path: modem-bin
 
+      - name: Download Windows desktop exe
+        uses: actions/download-artifact@v5
+        with:
+          name: desktop-windows-amd64
+          path: desktop-bin
+
       - name: Install NSIS
         run: choco install nsis --no-progress -y
+
+      # Evergreen bootstrapper (small; downloads the runtime only when the
+      # installer finds WebView2 missing). Redistributable per Microsoft.
+      - name: Download WebView2 bootstrapper
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "MicrosoftEdgeWebview2Setup.exe"
+          $sig = Get-AuthenticodeSignature "MicrosoftEdgeWebview2Setup.exe"
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw "WebView2 bootstrapper signature check failed: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
 
       - name: Build installer
         shell: pwsh
         run: |
-          $fullVersion = "${{ github.ref_name }}" -replace '^v', ''
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $fullVersion = "${{ github.ref_name }}" -replace '^v', ''
+          } else {
+            $fullVersion = (Get-Content VERSION -Raw).Trim()
+          }
           # VIProductVersion needs a 4-part numeric version; strip any pre-release suffix
           $numeric = ($fullVersion -split '-')[0] + ".0"
           $binaryPath = (Resolve-Path "bin/graywolf.exe").Path
           $modemPath  = (Resolve-Path "modem-bin/graywolf-modem.exe").Path
+          $desktopPath = (Resolve-Path "desktop-bin/graywolf-desktop.exe").Path
+          $webview2   = (Resolve-Path "MicrosoftEdgeWebview2Setup.exe").Path
           $outFile    = "graywolf_${fullVersion}_Windows_x86_64.exe"
           & "C:\Program Files (x86)\NSIS\makensis.exe" `
             "/DAPP_VERSION=$fullVersion" `
             "/DAPP_VERSION_NUMERIC=$numeric" `
             "/DBINARY_PATH=$binaryPath" `
             "/DMODEM_PATH=$modemPath" `
+            "/DDESKTOP_PATH=$desktopPath" `
+            "/DWEBVIEW2_BOOTSTRAPPER=$webview2" `
             "/DOUTFILE=$outFile" `
             packaging/nsis/graywolf.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
 
+      - name: Upload installer artifact (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-installer
+          path: packaging/nsis/graywolf_*_Windows_x86_64.exe
+          retention-days: 7
+
       - name: Upload installer to release
+        if: github.event_name != 'workflow_dispatch'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

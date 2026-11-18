@@ -8,6 +8,13 @@
 ;
 ; Optional:
 ;   OUTFILE             output installer filename
+;   DESKTOP_PATH        absolute path to staged graywolf-desktop.exe (the
+;                       native desktop app). When set, the main Start Menu
+;                       shortcut opens the desktop app and a second
+;                       shortcut keeps the browser-based mode.
+;   WEBVIEW2_BOOTSTRAPPER  absolute path to MicrosoftEdgeWebview2Setup.exe;
+;                       embedded and run when the WebView2 runtime the
+;                       desktop app needs is missing (rare on Windows 10/11).
 
 !ifndef APP_VERSION
   !error "APP_VERSION is required (pass /DAPP_VERSION=x.y.z)"
@@ -29,6 +36,9 @@
 !define APP_PUBLISHER "chrissnell"
 !define APP_EXE       "graywolf.exe"
 !define MODEM_EXE     "graywolf-modem.exe"
+!define DESKTOP_EXE   "graywolf-desktop.exe"
+; Evergreen WebView2 runtime client GUID (Microsoft-documented detection key).
+!define WEBVIEW2_GUID "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 !define APP_REGKEY    "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
 Name "${APP_NAME} ${APP_VERSION}"
@@ -49,6 +59,7 @@ VIAddVersionKey  "LegalCopyright"  "${APP_PUBLISHER}"
 
 !include "MUI2.nsh"
 !include "x64.nsh"
+!include "LogicLib.nsh"
 
 !define MUI_ABORTWARNING
 
@@ -75,6 +86,44 @@ VIAddVersionKey  "LegalCopyright"  "${APP_PUBLISHER}"
 Function LaunchAppShortcut
   ExecShell "" "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
 FunctionEnd
+
+; The desktop app hides to the tray on close, so a plain WM_CLOSE does not
+; stop it; force-stop it (and its modem child, /T) so its files can be
+; replaced or removed. The SQLite databases are crash-safe.
+!macro StopDesktopApp
+  nsExec::ExecToStack 'taskkill /F /T /IM ${DESKTOP_EXE}'
+  Pop $0
+  Pop $1
+  Sleep 500
+!macroend
+
+!ifdef DESKTOP_PATH
+!ifdef WEBVIEW2_BOOTSTRAPPER
+; Install the WebView2 runtime if it is missing. Checks the per-machine
+; and per-user registrations Microsoft documents; "0.0.0.0" means removed.
+Function EnsureWebView2
+  ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2_GUID}" "pv"
+  ${If} $0 == ""
+  ${OrIf} $0 == "0.0.0.0"
+    ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\${WEBVIEW2_GUID}" "pv"
+  ${EndIf}
+  ${If} $0 != ""
+  ${AndIf} $0 != "0.0.0.0"
+    DetailPrint "WebView2 runtime $0 found"
+    Return
+  ${EndIf}
+  DetailPrint "Installing the Microsoft Edge WebView2 runtime..."
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\MicrosoftEdgeWebview2Setup.exe" "${WEBVIEW2_BOOTSTRAPPER}"
+  ExecWait '"$PLUGINSDIR\MicrosoftEdgeWebview2Setup.exe" /silent /install' $1
+  ${If} $1 != 0
+    MessageBox MB_ICONEXCLAMATION|MB_OK \
+      "The Microsoft Edge WebView2 runtime could not be installed (error $1).$\n$\nThe ${APP_NAME} window needs it. You can install it from Microsoft later, or use the '${APP_NAME} (web browser)' shortcut meanwhile." \
+      /SD IDOK
+  ${EndIf}
+FunctionEnd
+!endif
+!endif
 
 ; ---------------------------------------------------------------------------
 ; Init: 64-bit only, and silently uninstall any previous version in place
@@ -113,9 +162,16 @@ FunctionEnd
 ; ---------------------------------------------------------------------------
 
 Section "Install"
+  !insertmacro StopDesktopApp
   SetOutPath "$INSTDIR"
   File "/oname=${APP_EXE}"   "${BINARY_PATH}"
   File "/oname=${MODEM_EXE}" "${MODEM_PATH}"
+!ifdef DESKTOP_PATH
+  File "/oname=${DESKTOP_EXE}" "${DESKTOP_PATH}"
+!ifdef WEBVIEW2_BOOTSTRAPPER
+  Call EnsureWebView2
+!endif
+!endif
 
   ; Writable data directory under C:\ProgramData. Same path the old MSI
   ; used, so existing users keep their database on upgrade.
@@ -128,13 +184,28 @@ Section "Install"
   nsExec::ExecToLog 'icacls "$APPDATA\${APP_NAME}" /grant "*S-1-5-32-545:(OI)(CI)M"'
   Pop $0
 
+  CreateDirectory "$SMPROGRAMS\${APP_NAME}"
+!ifdef DESKTOP_PATH
+  ; Main shortcut opens the desktop app. With no arguments it uses the
+  ; same data files as the browser-mode shortcut below
+  ; (C:\ProgramData\Graywolf\graywolf.db, graywolf-history.db) and finds
+  ; graywolf-modem.exe next to itself.
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" \
+    "$INSTDIR\${DESKTOP_EXE}" "" "$INSTDIR\${DESKTOP_EXE}" 0
+  ; Browser mode: same arguments the previous Windows service used; the
+  ; UI is then at http://127.0.0.1:8080 in any browser.
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME} (web browser).lnk" \
+    "$INSTDIR\${APP_EXE}" \
+    '-config "$APPDATA\${APP_NAME}\graywolf.db" -history-db "$APPDATA\${APP_NAME}\graywolf-history.db" -modem "$INSTDIR\${MODEM_EXE}" -http 127.0.0.1:8080' \
+    "$INSTDIR\${APP_EXE}" 0
+!else
   ; Start Menu shortcut launches graywolf with the same arguments the
   ; previous Windows service used. The icon reuses the binary's own.
-  CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" \
     "$INSTDIR\${APP_EXE}" \
     '-config "$APPDATA\${APP_NAME}\graywolf.db" -history-db "$APPDATA\${APP_NAME}\graywolf-history.db" -modem "$INSTDIR\${MODEM_EXE}" -http 127.0.0.1:8080' \
     "$INSTDIR\${APP_EXE}" 0
+!endif
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk" \
     "$INSTDIR\uninstall.exe"
 
@@ -143,7 +214,11 @@ Section "Install"
   WriteRegStr   HKLM "${APP_REGKEY}" "DisplayName"          "${APP_NAME}"
   WriteRegStr   HKLM "${APP_REGKEY}" "DisplayVersion"       "${APP_VERSION}"
   WriteRegStr   HKLM "${APP_REGKEY}" "Publisher"            "${APP_PUBLISHER}"
+!ifdef DESKTOP_PATH
+  WriteRegStr   HKLM "${APP_REGKEY}" "DisplayIcon"          "$INSTDIR\${DESKTOP_EXE}"
+!else
   WriteRegStr   HKLM "${APP_REGKEY}" "DisplayIcon"          "$INSTDIR\${APP_EXE}"
+!endif
   WriteRegStr   HKLM "${APP_REGKEY}" "InstallLocation"      "$INSTDIR"
   WriteRegStr   HKLM "${APP_REGKEY}" "UninstallString"      '"$INSTDIR\uninstall.exe"'
   WriteRegStr   HKLM "${APP_REGKEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
@@ -159,13 +234,16 @@ SectionEnd
 
 Section "Uninstall"
   SetShellVarContext all
+  !insertmacro StopDesktopApp
 
   Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\${MODEM_EXE}"
+  Delete "$INSTDIR\${DESKTOP_EXE}"
   Delete "$INSTDIR\uninstall.exe"
   RMDir  "$INSTDIR"
 
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME} (web browser).lnk"
   Delete "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk"
   RMDir  "$SMPROGRAMS\${APP_NAME}"
 

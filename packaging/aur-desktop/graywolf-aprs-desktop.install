@@ -1,0 +1,17 @@
+post_install() {
+  udevadm control --reload-rules 2>/dev/null || true
+  udevadm trigger --subsystem-match=hidraw 2>/dev/null || true
+  echo ""
+  echo "==> Graywolf desktop installed. Start \"Graywolf\" from your applications menu."
+  echo "    Serial-port PTT needs your user in the uucp group:"
+  echo "      sudo usermod -aG uucp \$USER   (then log out and back in)"
+  echo ""
+}
+
+post_upgrade() {
+  udevadm control --reload-rules 2>/dev/null || true
+}
+
+post_remove() {
+  udevadm control --reload-rules 2>/dev/null || true
+}

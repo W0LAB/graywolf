@@ -27,8 +27,10 @@ Release pipeline definition: [`../../.goreleaser.yml`](../../.goreleaser.yml).
 | `.deb`, `.rpm` | goreleaser `nfpms:` | Go binary + rust-bin + systemd unit + udev rules + post/pre scripts | `.deb` / `.rpm` artifacts | Tag push |
 | OCI image | goreleaser `dockers:` + [`../../Dockerfile.goreleaser`](../../Dockerfile.goreleaser), [`../../Dockerfile.goreleaser.arm64`](../../Dockerfile.goreleaser.arm64) | Go binary + `graywolf-modem-{amd64,arm64}` | `ghcr.io/chrissnell/graywolf:<tag>-{amd64,arm64}`, manifest list `:<tag>` and `:latest` | Tag push |
 | Arch AUR | [`../../packaging/aur/PKGBUILD`](../../packaging/aur/PKGBUILD) (pkgname `graywolf-aprs`) | github archive of the tag, `.service`, `.sysusers` | AUR (off-repo upload by maintainer) | `make bump-*` rewrites `pkgver` in `PKGBUILD` and `.SRCINFO` |
-| Windows NSIS installer | [`../../packaging/nsis/graywolf.nsi`](../../packaging/nsis/graywolf.nsi) (`makensis`) | `BINARY_PATH`, `MODEM_PATH`, `APP_VERSION`, `APP_VERSION_NUMERIC` | `graywolf_<ver>_Windows_x86_64.exe` | Manual; outside goreleaser |
-| Native desktop app (spike) | run inside `cmd/graywolf-desktop/` (needs `web/dist/` built first): Linux `CGO_ENABLED=1 go build -tags gtk3,production` (needs `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`); Windows `GOOS=windows CGO_ENABLED=0 go build -tags production -ldflags -H=windowsgui` (cross-compiles from Linux, needs WebView2 runtime on the target) | `cmd/graywolf-desktop/` (separate Go module), `pkg/...`, `web/dist/` | `graywolf-desktop[.exe]`; must sit next to `graywolf-modem[.exe]` or get `-modem`. Windows: generate the resource `.syso` from `winres/winres.json` with go-winres before `go build` (icon, manifest, version) | Manual; not in CI or goreleaser yet |
+| Windows NSIS installer | [`../../packaging/nsis/graywolf.nsi`](../../packaging/nsis/graywolf.nsi) (`makensis`) | `BINARY_PATH`, `MODEM_PATH`, `APP_VERSION`, `APP_VERSION_NUMERIC`; optional `DESKTOP_PATH` (desktop exe -> main Start Menu shortcut, plus a "Graywolf (web browser)" shortcut for the old mode) and `WEBVIEW2_BOOTSTRAPPER` (embedded, run only when the WebView2 runtime is missing) | `graywolf_<ver>_Windows_x86_64.exe` | `release.yml` `installer` job (tag push: attached to the release; `workflow_dispatch`: version from `VERSION`, kept as a workflow artifact) |
+| Native desktop app, local | `make graywolf-desktop` (Linux: `release` + `web`, then cgo `go build -tags gtk3,production`; needs `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`) / `make graywolf-desktop-windows` (cross-compile, `-H=windowsgui`; runs pinned `go run github.com/tc-hib/go-winres@v0.3.3` first for icon/manifest/version `.syso`) / `make desktop-test` | `cmd/graywolf-desktop/` (separate Go module), `pkg/...`, `web/dist/` | `bin/graywolf-desktop[.exe]`; must sit next to `graywolf-modem[.exe]` (symlinks resolved) or get `-modem` | Manual |
+| Native desktop app, release | `release.yml` jobs `desktop-windows` (ubuntu, cross-compile + go-winres), `desktop-linux` (amd64 + arm64 in a `debian:bookworm` container, so the glibc floor is 2.36; vet/test, cgo build, nfpm from [`../../packaging/desktop/nfpm.yaml.in`](../../packaging/desktop/nfpm.yaml.in)), `desktop-publish` (uploads to the release with `checksums-desktop.txt`) | desktop module + frontend-dist + `rust-linux-<arch>` modem | `graywolf-desktop_<ver>_<arch>.deb`, `graywolf-desktop-<ver>.<arch>.rpm`, `graywolf-desktop_<ver>_linux_<arch>.tar.gz`; Windows exe goes into the NSIS installer | Tag push; `workflow_dispatch` keeps them as workflow artifacts. Not built by goreleaser (its `builder: prebuilt` is Pro-only), so not in `checksums.txt` |
+| Arch AUR desktop | [`../../packaging/aur-desktop/PKGBUILD`](../../packaging/aur-desktop/PKGBUILD) (pkgname `graywolf-aprs-desktop`, from source) | github archive of the tag | AUR (off-repo upload) | `make bump-point` / `bump-minor` rewrite its `pkgver` too |
 | Pre-built rust-bin (CI) | rust-build matrix in `.github/workflows/release.yml` | Per-target `cargo build --release` (Linux amd64, arm64, armv6, armv7; macOS amd64, arm64; Windows amd64) | `rust-bin/<os>_<arch>/graywolf-modem[.exe]` -- note the two 32-bit ARM modems land in distinct dirs `linux_arm` (armv6) and `linux_armv7` (NEON); plus top-level `graywolf-modem-{amd64,arm64}` for the docker context (no 32-bit ARM docker image) | Tag push |
 
 ## CI workflows
@@ -36,7 +38,7 @@ Release pipeline definition: [`../../.goreleaser.yml`](../../.goreleaser.yml).
 | Workflow | Triggers | Jobs |
 |---|---|---|
 | `ci.yml` | push to main, PRs to main | Go vet + test (runs `docs-check` and `api-client-check` via `make go-test`) |
-| `release.yml` | tag push `v*` | Rust build matrix, then goreleaser orchestrates Go + nfpm + docker |
+| `release.yml` | tag push `v*`, manual | Rust build matrix, then goreleaser orchestrates Go + nfpm + docker; desktop app jobs (`desktop-windows`, `desktop-linux`, `desktop-publish`); NSIS `installer` |
 | `fuzz.yml` | nightly `0 8 * * *` UTC, manual | `go-fuzz` on `pkg/ax25` and `pkg/aprs` |
 
 The pre-commit hook in [`../../.githooks/`](../../.githooks/) (wired via
@@ -111,7 +113,7 @@ should agree because the handbook one is `cp`'d from the gen one. CI's
   `api.html` itself is checked-in static HTML and is not regenerated.
 - `notes.yaml` release notes -- hand-authored before bump.
 - [`../../packaging/nsis/graywolf.nsi`](../../packaging/nsis/graywolf.nsi)
-  invocation -- run by hand, not goreleaser.
+  -- driven by the `release.yml` `installer` job, not goreleaser.
 - `docs/changelogs/`, `docs/superpowers/` -- manual.
 
 ## Release ritual (summary)
@@ -122,7 +124,9 @@ Wiki-side notes:
 1. A `notes.yaml` entry for the new version must exist before
    `make bump-*`; the targets `grep` for it and refuse otherwise.
 2. The bump target rewrites `VERSION`, `graywolf-modem/Cargo.toml`,
-   `Cargo.lock`, `packaging/aur/PKGBUILD`, `packaging/aur/.SRCINFO`, and
+   `Cargo.lock`, `packaging/aur/PKGBUILD`, `packaging/aur/.SRCINFO`,
+   `packaging/aur-desktop/PKGBUILD`, `packaging/aur-desktop/.SRCINFO`
+   (not `bump-beta`), and
    the sample tag in `docs/handbook/installation.html`. See
    [invariant 3](invariants.md).
 3. Retag contract: if CI fails after the tag is pushed, delete and
