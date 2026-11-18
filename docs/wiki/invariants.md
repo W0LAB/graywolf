@@ -2152,6 +2152,13 @@ Source: [`../../web/src/lib/desktopBridge.js`](../../web/src/lib/desktopBridge.j
 [`../../web/src/lib/platform.js`](../../web/src/lib/platform.js),
 [`../../cmd/graywolf-desktop/go.mod`](../../cmd/graywolf-desktop/go.mod).
 
+*Placeholder page:* the "Starting Graywolf..." page is the window's
+initial **URL** (a `data:` URL from `startingURL()`), never the Wails
+`HTML` option. When the window is realized, Wails loads `options.HTML`
+over `options.URL` (Linux `run()`, Windows `navigateInitialPage`), so a
+station that bound its listener before then had its `SetURL` silently
+overwritten and the window stayed on the placeholder.
+
 ### 72. The desktop shell owns shutdown: station first, GUI second, never wait on a dialog
 
 `cmd/graywolf-desktop` sets Wails `DisableDefaultSignalHandler: true` and

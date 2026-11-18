@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/rand"
 	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -53,6 +54,11 @@ const startingHTML = `<!doctype html><html><head><meta charset="utf-8">
 <style>html,body{height:100%;margin:0;background:#1b1d21;color:#c9ccd1;
 font:15px system-ui,sans-serif;display:flex;align-items:center;justify-content:center}</style>
 </head><body>Starting Graywolf&hellip;</body></html>`
+
+// startingURL is the placeholder page shown until the station listens.
+func startingURL() string {
+	return "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(startingHTML))
+}
 
 // splitDesktopFlags removes desktop-only flags from args.
 func splitDesktopFlags(args []string) (hidden bool, rest []string) {
@@ -187,7 +193,12 @@ func main() {
 		Height:    900,
 		MinWidth:  800,
 		MinHeight: 560,
-		HTML:      startingHTML,
+		// The placeholder goes in as the initial URL, never as the HTML
+		// option: Wails (Linux run(), Windows navigateInitialPage) loads
+		// options.HTML over options.URL when the window is realized, so a
+		// station that comes up first would have its SetURL overwritten
+		// and the window would stay on "Starting..." forever.
+		URL: startingURL(),
 		// Start-at-login opens straight to the tray -- but only if there
 		// is a tray to come back from.
 		Hidden: hidden && trayOK,

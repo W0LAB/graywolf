@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/hex"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/chrissnell/graywolf/pkg/app"
@@ -102,5 +105,19 @@ func TestNewFileHandler_RotatesOversizedLog(t *testing.T) {
 	}
 	if fi, err := os.Stat(path); err != nil || fi.Size() != 0 {
 		t.Fatalf("fresh log not started: %v", err)
+	}
+}
+
+// The placeholder must be a URL Wails' GetStartURL passes through intact
+// (not the HTML option -- see the window options in main()).
+func TestStartingURL(t *testing.T) {
+	u := startingURL()
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme != "data" || parsed.String() != u {
+		t.Fatalf("startingURL does not round-trip: %v %q", err, parsed)
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(u, "data:text/html;base64,"))
+	if err != nil || string(b) != startingHTML {
+		t.Fatalf("payload mismatch: %v", err)
 	}
 }
