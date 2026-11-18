@@ -3196,6 +3196,9 @@ func (a *App) httpComponent() namedComponent {
 			if a.cfg.OnHTTPListenerReady != nil {
 				a.cfg.OnHTTPListenerReady()
 			}
+			if a.cfg.OnHTTPListenerBound != nil {
+				a.cfg.OnHTTPListenerBound(ln.Addr())
+			}
 			a.httpWG.Add(1)
 			go func() {
 				defer a.httpWG.Done()

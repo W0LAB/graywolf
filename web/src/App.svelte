@@ -69,6 +69,12 @@
     '/about': About,
   };
   const routes = (() => {
+    if (Platform.isDesktopApp) {
+      // Desktop shell authenticates with a per-launch bearer; no login page.
+      const r = { ...baseRoutes };
+      delete r['/login'];
+      return r;
+    }
     if (Platform.kind !== 'android') return baseRoutes;
     const r = { ...baseRoutes };
     delete r['/agw'];
@@ -88,10 +94,10 @@
   // the sidebar with no gap.
   let currentPath = $derived($location);
 
-  let isLoginPage = $derived(currentPath === '/login' && Platform.kind !== 'android');
+  let isLoginPage = $derived(currentPath === '/login' && !Platform.hasLaunchToken);
 
   $effect(() => {
-    if (Platform.kind === 'android' && currentPath === '/login') {
+    if (Platform.hasLaunchToken && currentPath === '/login') {
       // replace() uses history.replaceState — no new history entry, so
       // pressing back doesn't loop the user through /login again. Direct
       // `window.location.hash = '#/'` would push, causing a visible
@@ -113,7 +119,8 @@
     // mismatch that a reload can't fix. /login is also stripped from
     // the route map on Android, so the redirect would render a blank
     // page anyway.
-    const isAndroid = Platform.kind === 'android';
+    // Desktop shell (cmd/graywolf-desktop) behaves the same way.
+    const isAndroid = Platform.hasLaunchToken;
     fetch('/api/auth/setup')
       .then(r => r.json())
       .then(data => {

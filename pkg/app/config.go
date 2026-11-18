@@ -10,6 +10,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/chrissnell/graywolf/pkg/logbuffer"
@@ -108,6 +109,12 @@ type Config struct {
 	// readiness "\n" to stdout that GoLauncher waits on. Desktop
 	// builds leave it nil.
 	OnHTTPListenerReady func()
+
+	// OnHTTPListenerBound, if non-nil, is invoked exactly once with the
+	// bound address of the main HTTP listener (after OnHTTPListenerReady,
+	// before Serve). Lets a caller bind "127.0.0.1:0" and learn the
+	// OS-chosen port. Used by cmd/graywolf-desktop.
+	OnHTTPListenerBound func(net.Addr)
 
 	// LogBuffer is the standalone slog ring-buffer DB, set by main after
 	// setupLogger. nil when the buffer is disabled/unavailable; the

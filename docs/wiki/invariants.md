@@ -2118,3 +2118,30 @@ Source: [`../../web/src/components/messages/MessageThread.svelte`](../../web/src
 [`../../web/src/lib/messagesStore.svelte.js`](../../web/src/lib/messagesStore.svelte.js)
 (`adjustUnread`),
 [`../../web/src/lib/unread-batch-core.js`](../../web/src/lib/unread-batch-core.js).
+
+### 71. The desktop shell never sets `GraywolfWebInterface`, and lives in its own Go module
+
+`web/src/lib/platform.js` treats a token from
+`globalThis.GraywolfWebInterface` as "running on Android" and lights up
+Android-only UI (BT/USB serial, Android PTT methods, hidden AGW/Actions).
+The native desktop shell (`cmd/graywolf-desktop`) therefore hands its
+per-launch bearer to the SPA through the initial URL (`?gwdesktop=`),
+captured by `desktopBridge.js`, and the platform kind is `desktop-app`.
+Gate Android-only surfaces on `=== 'android'`, never on `!== 'desktop'`;
+gate "no cookie login, a host shell owns auth" on `Platform.hasLaunchToken`.
+
+`cmd/graywolf-desktop` has its own `go.mod` (with `replace` to the repo
+root). Adding Wails v3 to the root module raises shared dependencies
+through MVS, including `modernc.org/sqlite` (v1.23.1 -> v1.44.3) and
+`modernc.org/libc`, which would silently change the SQLite engine in the
+headless/Pi `graywolf` binary. Keep Wails out of the root `go.mod`. The
+desktop binary itself does run the newer SQLite; configstore, historydb
+and logbuffer tests pass under it, and the file format is shared.
+
+*Why:* the first prevents the desktop app rendering as Android; the
+second keeps the `CGO_ENABLED=0` headless build's dependency set
+unchanged by a GUI-only addition.
+
+Source: [`../../web/src/lib/desktopBridge.js`](../../web/src/lib/desktopBridge.js),
+[`../../web/src/lib/platform.js`](../../web/src/lib/platform.js),
+[`../../cmd/graywolf-desktop/go.mod`](../../cmd/graywolf-desktop/go.mod).

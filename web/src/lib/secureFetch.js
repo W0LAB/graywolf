@@ -15,18 +15,21 @@
 // it globally.
 
 import { getBearerToken } from './androidBridge.js';
+import { getDesktopToken } from './desktopBridge.js';
 
 // Read the bridge directly each call (not the cached androidBridge.getBearerToken)
 // so a renderer process that hadn't seen `GraywolfWebInterface` at install
 // time still picks up the token once the bridge attaches. The bridge is
 // stable for the WebView's lifetime, so a single read per fetch is cheap.
+// Falls back to the native desktop shell's token (desktopBridge.js).
 function readBearerNow() {
   try {
     const v = globalThis.GraywolfWebInterface?.getBearerToken?.();
-    return (typeof v === 'string' && v.length > 0) ? v : null;
+    if (typeof v === 'string' && v.length > 0) return v;
   } catch {
-    return null;
+    // fall through to the desktop token
   }
+  return getDesktopToken();
 }
 
 export function installSecureFetch() {

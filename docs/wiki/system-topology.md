@@ -311,5 +311,6 @@ The wire contract (`flareschema.Flare` -> `flareschema.SubmitResponse`) is the o
 | Arch AUR (`graywolf-aprs`) | [`../../packaging/aur/`](../../packaging/aur/) |
 | Windows installer | [`../../packaging/nsis/graywolf.nsi`](../../packaging/nsis/graywolf.nsi) (NSIS, hand-driven outside goreleaser) |
 | OCI image | `ghcr.io/chrissnell/graywolf:<tag>` (linux amd64/arm64 manifest list) |
+| Native desktop app (spike, not shipped) | [`../../cmd/graywolf-desktop/`](../../cmd/graywolf-desktop/) -- same `app.App` in-process, SPA in a Wails v3 window on a loopback bearer-gated listener; spawns `graywolf-modem` like headless |
 
 Build details and triggers live in [`build-pipelines.md`](build-pipelines.md).

@@ -258,6 +258,21 @@ Mirrors the tactical-callsign machinery end-to-end.
 | `app/{auth_store,gpsmanager,adapters,wiring,modem,flags,config,shutdown,platform_*}` | Wiring helpers |
 | `internal/{backoff,dedup,ratelimit,testsync,testtx}` | Internal utilities |
 
+## Native desktop shell (`cmd/graywolf-desktop/`) -- spike
+
+Phase 0 spike, not shipped or wired into CI yet. Plan:
+[`../../.context/2026-11-17-native-desktop-shell.md`](../../.context/2026-11-17-native-desktop-shell.md).
+
+| Concern | Where |
+|---|---|
+| Entry point: runs `app.App` in-process, Wails v3 window + tray | [`../../cmd/graywolf-desktop/main.go`](../../cmd/graywolf-desktop/main.go) |
+| Loopback listener on `127.0.0.1:0`, port reported back | `app.Config.OnHTTPListenerBound` ([`../../pkg/app/config.go`](../../pkg/app/config.go)), called from `httpComponent` in [`../../pkg/app/wiring.go`](../../pkg/app/wiring.go) |
+| Per-launch bearer token -> SPA | initial URL `?gwdesktop=<token>`; captured and stripped by [`../../web/src/lib/desktopBridge.js`](../../web/src/lib/desktopBridge.js); attached by `secureFetch.js` |
+| Platform kind `desktop-app` (`Platform.isDesktopApp`, `Platform.hasLaunchToken`) | [`../../web/src/lib/platform.js`](../../web/src/lib/platform.js); login page skipped in `App.svelte` |
+| Data dir | Linux `$XDG_DATA_HOME/graywolf` (`paths_unix.go`); Windows `%ProgramData%\Graywolf` (`paths_windows.go`); explicit `-config` moves log + webview profile beside it |
+| Single-instance lock (Linux needs session D-Bus; skipped with a warning if absent) | `singleinstance_{linux,other}.go` |
+| Build | own Go module (`cmd/graywolf-desktop/go.mod`, `replace` to repo root); see [build-pipelines](build-pipelines.md) and [invariant 71](invariants.md) |
+
 ## Go service: diagnostic flare CLI
 
 | Concern | File |

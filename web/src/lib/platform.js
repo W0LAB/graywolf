@@ -10,16 +10,23 @@
 //
 // Companion modules: pkg/platform.Kind (Go) and Platform.KIND (Kotlin).
 
+import { getDesktopToken } from './desktopBridge.js';
+
+// Kinds: 'android' (Android WebView), 'desktop-app' (native desktop
+// shell, cmd/graywolf-desktop), 'desktop' (plain browser). Code that
+// gates Android-only surfaces must compare against 'android', never
+// against 'desktop', so the desktop shell gets desktop behaviour.
 function detectKind() {
   // Bypass androidBridge's cache — Platform.kind is documented as dynamic
   // so test setups that toggle globalThis.GraywolfWebInterface observe
   // the change without re-importing.
   try {
     const v = globalThis.GraywolfWebInterface?.getBearerToken?.();
-    return (typeof v === 'string' && v.length > 0) ? 'android' : 'desktop';
+    if (typeof v === 'string' && v.length > 0) return 'android';
   } catch {
-    return 'desktop';
+    // fall through
   }
+  return getDesktopToken() ? 'desktop-app' : 'desktop';
 }
 
 export const Platform = {
@@ -28,4 +35,8 @@ export const Platform = {
   // the same detectKind() call as `kind`, so toggling
   // globalThis.GraywolfWebInterface between accesses flips this too.
   get isAndroid() { return detectKind() === 'android'; },
+  get isDesktopApp() { return detectKind() === 'desktop-app'; },
+  // True when a host shell authenticates the SPA with a per-launch
+  // bearer token (Android or desktop app): no cookie login page.
+  get hasLaunchToken() { return detectKind() !== 'desktop'; },
 };
