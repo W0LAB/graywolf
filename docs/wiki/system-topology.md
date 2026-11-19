@@ -317,7 +317,7 @@ The wire contract (`flareschema.Flare` -> `flareschema.SubmitResponse`) is the o
 
 | Target | Path / source |
 |---|---|
-| Tarball / zip | goreleaser archives (linux/darwin/windows × amd64/arm64; no win-arm64) |
+| Tarball / zip | goreleaser archives (linux amd64/arm64/armv6/armv7, windows amd64; no macOS) |
 | `.deb`, `.rpm` | goreleaser nfpm |
 | Arch AUR (`graywolf-aprs`) | [`../../packaging/aur/`](../../packaging/aur/) |
 | Windows installer | [`../../packaging/nsis/graywolf.nsi`](../../packaging/nsis/graywolf.nsi) (NSIS, hand-driven outside goreleaser) |

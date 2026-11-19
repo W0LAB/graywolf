@@ -43,16 +43,6 @@ jobs:
             arch: armv7
             platform: linux
             use_cross: true
-          - os: macos-15
-            target: x86_64-apple-darwin
-            arch: amd64
-            platform: darwin
-            use_cross: false
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            arch: arm64
-            platform: darwin
-            use_cross: false
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             arch: amd64
@@ -429,15 +419,13 @@ jobs:
 
       - name: Arrange Rust binaries for GoReleaser
         run: |
-          mkdir -p rust-bin/{linux_amd64,linux_arm64,linux_arm,linux_armv7,darwin_amd64,darwin_arm64,windows_amd64}
+          mkdir -p rust-bin/{linux_amd64,linux_arm64,linux_arm,linux_armv7,windows_amd64}
           cp rust-artifacts/rust-linux-amd64/graywolf-modem       rust-bin/linux_amd64/
           cp rust-artifacts/rust-linux-arm64/graywolf-modem       rust-bin/linux_arm64/
           cp rust-artifacts/rust-linux-arm/graywolf-modem         rust-bin/linux_arm/
           # armv7 (NEON) modem -- kept distinct from the armv6 linux_arm
           # build so the goarm=7 archive/package bundle the optimized binary.
           cp rust-artifacts/rust-linux-armv7/graywolf-modem       rust-bin/linux_armv7/
-          cp rust-artifacts/rust-darwin-amd64/graywolf-modem      rust-bin/darwin_amd64/
-          cp rust-artifacts/rust-darwin-arm64/graywolf-modem      rust-bin/darwin_arm64/
           cp rust-artifacts/rust-windows-amd64/graywolf-modem.exe rust-bin/windows_amd64/
           chmod +x rust-bin/*/graywolf-modem || true
           # Flat copies for Docker builds (extra_files path is preserved in context)

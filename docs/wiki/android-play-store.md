@@ -11,7 +11,7 @@ and [`../../android/app/build.gradle.kts`](../../android/app/build.gradle.kts).
 `make bump-point` (or `bump-minor`) is the only manual action a release
 needs. It writes `VERSION`, commits, tags `vX.Y.Z`, and pushes. The tag
 push fires two workflows in parallel: `release.yml` (goreleaser:
-Linux/macOS/Windows binaries, Docker, `.deb`/`.rpm`, NSIS) and
+Linux/Windows binaries, Docker, `.deb`/`.rpm`, NSIS) and
 `android.yml`. The Android workflow builds a release-signed `.aab` +
 `.apk`, attaches both to the GitHub Release goreleaser created, and
 uploads the `.aab` to the Play **Closed Testing** track (Play's `alpha`
